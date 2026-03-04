@@ -1,125 +1,79 @@
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
-const { createServer: createHttpServer } = require('http');
-const httpProxy = require('http-proxy');
-const urlModule = require('url');
-const path = require('path');
 
 const app = express();
-
-const ECAST_TARGET    = 'https://ecast.jackboxgames.com';
-const BLOBCAST_TARGET = 'https://blobcast.jackboxgames.com';
-
-// ── Статические файлы (play.html и др.) ──────────────────────────
-app.use(express.static(path.join(__dirname, 'public')));
-
-// ── Health check ──────────────────────────────────────────────────
-app.get('/health', (_req, res) => res.json({ ok: true, connections: activeSockets.size }));
-app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'play.html')));
-
-// ── Ecast proxy (Pack 7+) ─────────────────────────────────────────
-const ecastProxy = createProxyMiddleware({
-  target: ECAST_TARGET, changeOrigin: true, ws: true,
-  pathRewrite: { '^/ecast': '' },
-  on: {
-    proxyReq(p) {
-      p.setHeader('Host', 'ecast.jackboxgames.com');
-      p.setHeader('Origin', 'https://jackbox.tv');
-    },
-    error(err, _req, res) {
-      console.error('[ecast]', err.message);
-      try { res.status(502).json({ error: 'ecast error' }); } catch(_) {}
-    }
-  }
-});
-app.use('/ecast', ecastProxy);
-
-// ── Blobcast proxy (Pack 1-6) ─────────────────────────────────────
-const blobcastProxy = createProxyMiddleware({
-  target: BLOBCAST_TARGET, changeOrigin: true, ws: true,
-  pathRewrite: { '^/blobcast': '' },
-  on: {
-    proxyReq(p) {
-      p.setHeader('Host', 'blobcast.jackboxgames.com');
-      p.setHeader('Origin', 'https://jackbox.tv');
-    },
-    error(err, _req, res) {
-      console.error('[blobcast]', err.message);
-      try { res.status(502).json({ error: 'blobcast error' }); } catch(_) {}
-    }
-  }
-});
-app.use('/blobcast', blobcastProxy);
-
-// ── REST API proxy (/api/v2/rooms) ────────────────────────────────
-app.use('/api', createProxyMiddleware({
-  target: ECAST_TARGET, changeOrigin: true,
-  on: {
-    proxyReq(p) { p.setHeader('Host', 'ecast.jackboxgames.com'); },
-    error(err, _req, res) {
-      console.error('[api]', err.message);
-      try { res.status(502).json({ error: 'api error' }); } catch(_) {}
-    }
-  }
-}));
-
-// ── WebSocket proxy + keepalive ───────────────────────────────────
-const wsProxy = httpProxy.createProxyServer({ secure: true, ws: true });
-const activeSockets = new Set();
-
-wsProxy.on('error', (err, _req, sock) => {
-  console.error('[ws error]', err.message);
-  try { sock.end(); } catch(_) {}
-});
-
-wsProxy.on('open', (proxySocket) => {
-  proxySocket.setKeepAlive(true, 10000);
-});
-
-setInterval(() => {
-  let alive = 0;
-  for (const sock of activeSockets) {
-    if (sock.destroyed || !sock.writable) { activeSockets.delete(sock); continue; }
-    try { sock.setKeepAlive(true, 10000); alive++; } catch(_) { activeSockets.delete(sock); }
-  }
-  if (alive > 0) console.log(`[keepalive] ${alive} socket(s) active`);
-}, 20000);
-
 const PORT = process.env.PORT || 3000;
-const server = createHttpServer(app);
 
-server.on('upgrade', (req, socket, head) => {
-  const pathname = urlModule.parse(req.url).pathname || '';
+// ─── Хелпер: прокси с WebSocket ────────────────────────────────────────────
+function makeProxy(target) {
+  return createProxyMiddleware({
+    target,
+    changeOrigin: true,
+    ws: true, // важно для Socket.IO и WS
+    on: {
+      error: (err, req, res) => {
+        console.error('Proxy error:', err.message);
+        if (res?.writeHead) {
+          res.writeHead(502);
+          res.end('Proxy error');
+        }
+      },
+    },
+  });
+}
 
-  socket.setKeepAlive(true, 10000);
-  activeSockets.add(socket);
-  socket.once('close', () => activeSockets.delete(socket));
-  socket.once('error', () => activeSockets.delete(socket));
+// ─── Маршруты ───────────────────────────────────────────────────────────────
 
-  if (pathname.startsWith('/ecast')) {
-    req.url = req.url.replace(/^\/ecast/, '') || '/';
-    console.log(`[ws] ecast → ${req.url}`);
-    wsProxy.ws(req, socket, head, {
-      target: 'wss://ecast.jackboxgames.com',
-      changeOrigin: true,
-      headers: { Host: 'ecast.jackboxgames.com', Origin: 'https://jackbox.tv' }
-    });
-  } else if (pathname.startsWith('/blobcast')) {
-    req.url = req.url.replace(/^\/blobcast/, '') || '/';
-    console.log(`[ws] blobcast → ${req.url}`);
-    wsProxy.ws(req, socket, head, {
-      target: 'wss://blobcast.jackboxgames.com',
-      changeOrigin: true,
-      headers: { Host: 'blobcast.jackboxgames.com', Origin: 'https://jackbox.tv' }
-    });
-  } else {
-    socket.end();
+// Старые игры: PP1–PP6, Quiplash 1–2, Fibbage 1–2
+// Игра должна иметь serverUrl = твой-домен/blobcast
+app.use('/blobcast', makeProxy('https://blobcast.jackboxgames.com'));
+
+// Новые игры: PP7–PP10, Drawful 2 International
+// Игра должна иметь serverUrl = твой-домен/ecast
+app.use('/ecast', makeProxy('https://ecast.jackboxgames.com'));
+
+// ─── Fallback: автоопределение по хосту ─────────────────────────────────────
+// Если serverUrl указан напрямую без пути — угадываем по User-Agent / запросу
+app.use('/', (req, res, next) => {
+  const url = req.url;
+  if (url.includes('/room/') || url.includes('/socket.io')) {
+    return makeProxy('https://blobcast.jackboxgames.com')(req, res, next);
   }
+  return makeProxy('https://ecast.jackboxgames.com')(req, res, next);
 });
 
-server.listen(PORT, () => {
-  console.log(`\n🎮 Jackbox Universal Proxy on port ${PORT}`);
-  console.log(`   Страница игроков  → /play.html`);
-  console.log(`   Ecast  (Pack 7+)  → ${ECAST_TARGET}`);
-  console.log(`   Blobcast (1-6)    → ${BLOBCAST_TARGET}\n`);
+// ─── Запуск ─────────────────────────────────────────────────────────────────
+const server = app.listen(PORT, () => {
+  console.log(`Jackbox proxy running on port ${PORT}`);
 });
+
+// WebSocket поддержка (нужна для Socket.IO в blobcast)
+server.on('upgrade', (req, socket, head) => {
+  const url = req.url;
+  let target;
+  if (url.includes('/blobcast') || url.includes('/room/') || url.includes('/socket.io')) {
+    target = 'wss://blobcast.jackboxgames.com';
+  } else {
+    target = 'wss://ecast.jackboxgames.com';
+  }
+  const proxy = createProxyMiddleware({ target, changeOrigin: true, ws: true });
+  proxy.upgrade(req, socket, head);
+});
+```
+
+---
+
+### Деплой на Render
+
+1. Запушь оба файла в GitHub
+2. Render → **New Web Service** → подключи репо
+3. **Build:** `npm install` | **Start:** `node server.js`
+4. Получишь URL вида `https://jackbox-proxy.onrender.com`
+
+---
+
+### Как настроить игры
+
+**PP7 и новее** — параметр запуска Steam:
+```
+-jbg.config serverUrl=jackbox-proxy.onrender.com/ecast
