@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Jackbox Player</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@700;900&family=Nunito+Sans:wght@400;600&display=swap');
+
+  :root {
+    --bg: #1a0533;
+    --card: #2a0d4a;
+    --accent: #ff3cac;
+    --accent2: #7b2fff;
+    --glow: #ff3cac88;
+    --text: #fff;
+    --muted: #b39cc8;
+
+    /* ← ЕДИНСТВЕННОЕ место, которое нужно изменить */
+    --PROXY_URL: "https://jackbox-proxy.onrender.com";
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Nunito Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px 16px;
+    overflow-x: hidden;
+  }
+
+  /* animated bg */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; z-index: 0;
+    background:
+      radial-gradient(ellipse 60% 50% at 20% 30%, #7b2fff22 0%, transparent 70%),
+      radial-gradient(ellipse 50% 60% at 80% 70%, #ff3cac22 0%, transparent 70%);
+    animation: bgPulse 8s ease-in-out infinite alternate;
+    pointer-events: none;
+  }
+  @keyframes bgPulse {
+    from { opacity: 0.6; }
+    to   { opacity: 1; }
+  }
+
+  .container {
+    position: relative; z-index: 1;
+    width: 100%; max-width: 420px;
+    display: flex; flex-direction: column; align-items: center; gap: 32px;
+  }
+
+  /* logo */
+  .logo {
+    font-family: 'Nunito', sans-serif;
+    font-weight: 900;
+    font-size: clamp(2rem, 8vw, 3rem);
+    letter-spacing: -1px;
+    background: linear-gradient(135deg, #ff3cac, #7b2fff);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    filter: drop-shadow(0 0 18px var(--glow));
+    user-select: none;
+  }
+
+  /* card */
+  .card {
+    background: var(--card);
+    border: 1px solid #ffffff14;
+    border-radius: 24px;
+    padding: 32px 28px;
+    width: 100%;
+    box-shadow: 0 8px 40px #0008, 0 0 0 1px #7b2fff22;
+  }
+
+  .card-title {
+    font-family: 'Nunito', sans-serif;
+    font-weight: 900;
+    font-size: 1.1rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 20px;
+  }
+
+  /* room code input */
+  .code-input-wrap {
+    position: relative;
+    margin-bottom: 16px;
+  }
+
+  .code-input {
+    width: 100%;
+    background: #ffffff0d;
+    border: 2px solid #ffffff22;
+    border-radius: 14px;
+    color: #fff;
+    font-family: 'Nunito', sans-serif;
+    font-weight: 900;
+    font-size: 2.4rem;
+    letter-spacing: 12px;
+    text-align: center;
+    text-transform: uppercase;
+    padding: 18px 16px;
+    outline: none;
+    transition: border-color .2s, box-shadow .2s;
+    caret-color: var(--accent);
+  }
+  .code-input::placeholder { color: #ffffff33; letter-spacing: 8px; }
+  .code-input:focus {
+    border-color: var(--accent2);
+    box-shadow: 0 0 0 4px #7b2fff33;
+  }
+
+  /* name input */
+  .name-input {
+    width: 100%;
+    background: #ffffff0d;
+    border: 2px solid #ffffff22;
+    border-radius: 14px;
+    color: #fff;
+    font-family: 'Nunito', sans-serif;
+    font-weight: 700;
+    font-size: 1.2rem;
+    text-align: center;
+    padding: 14px 16px;
+    outline: none;
+    transition: border-color .2s, box-shadow .2s;
+    margin-bottom: 20px;
+  }
+  .name-input::placeholder { color: #ffffff44; }
+  .name-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 4px #ff3cac33;
+  }
+
+  /* button */
+  .btn {
+    width: 100%;
+    background: linear-gradient(135deg, #ff3cac, #7b2fff);
+    border: none;
+    border-radius: 14px;
+    color: #fff;
+    font-family: 'Nunito', sans-serif;
+    font-weight: 900;
+    font-size: 1.15rem;
+    letter-spacing: 1px;
+    padding: 16px;
+    cursor: pointer;
+    transition: transform .15s, box-shadow .15s, filter .15s;
+    box-shadow: 0 4px 20px var(--glow);
+    text-transform: uppercase;
+  }
+  .btn:hover  { transform: translateY(-2px); box-shadow: 0 8px 30px var(--glow); }
+  .btn:active { transform: translateY(0); filter: brightness(.9); }
+  .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+  /* status */
+  .status {
+    margin-top: 16px;
+    padding: 12px 16px;
+    border-radius: 12px;
+    font-size: .92rem;
+    font-weight: 600;
+    text-align: center;
+    display: none;
+  }
+  .status.info    { background: #7b2fff33; color: #c9a8ff; display: block; }
+  .status.success { background: #00d46444; color: #6effc4;  display: block; }
+  .status.error   { background: #ff3c3c33; color: #ffaaaa;  display: block; }
+
+  /* game screen */
+  #gameScreen {
+    display: none;
+    width: 100%;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  .player-header {
+    text-align: center;
+  }
+  .player-name-display {
+    font-family: 'Nunito', sans-serif;
+    font-weight: 900;
+    font-size: 1.6rem;
+    background: linear-gradient(135deg, #ff3cac, #7b2fff);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .room-code-display {
+    font-size: .85rem;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  .game-msg {
+    background: var(--card);
+    border: 1px solid #ffffff14;
+    border-radius: 20px;
+    padding: 28px 24px;
+    text-align: center;
+  }
+  .game-msg .icon { font-size: 3rem; margin-bottom: 12px; }
+  .game-msg p { color: var(--muted); font-size: .95rem; line-height: 1.6; }
+
+  /* proxy url hint */
+  .proxy-hint {
+    font-size: .75rem;
+    color: #ffffff33;
+    text-align: center;
+    margin-top: -16px;
+  }
+  .proxy-hint span {
+    color: var(--accent2);
+    font-weight: 700;
+  }
+
+  /* dots loader */
+  .dots { display: inline-flex; gap: 4px; vertical-align: middle; }
+  .dots span {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    animation: dot .9s ease-in-out infinite;
+  }
+  .dots span:nth-child(2) { animation-delay: .15s; }
+  .dots span:nth-child(3) { animation-delay: .3s; }
+  @keyframes dot {
+    0%, 80%, 100% { opacity: .2; transform: scale(.8); }
+    40%           { opacity: 1;  transform: scale(1.2); }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <div class="logo">🎮 Jackbox</div>
+
+  <!-- JOIN SCREEN -->
+  <div class="card" id="joinScreen">
+    <div class="card-title">Enter Room Code</div>
+
+    <div class="code-input-wrap">
+      <input
+        class="code-input"
+        id="roomCode"
+        type="text"
+        maxlength="4"
+        placeholder="ABCD"
+        autocomplete="off"
+        autocorrect="off"
+        spellcheck="false"
+      >
+    </div>
+
+    <input
+      class="name-input"
+      id="playerName"
+      type="text"
+      maxlength="16"
+      placeholder="Your name"
+      autocomplete="off"
+    >
+
+    <button class="btn" id="joinBtn" onclick="joinRoom()">JOIN</button>
+
+    <div class="status" id="statusMsg"></div>
+  </div>
+
+  <!-- PROXY HINT -->
+  <div class="proxy-hint" id="proxyHint">
+    via proxy: <span id="proxyDisplay">...</span>
+  </div>
+
+  <!-- IN-GAME SCREEN -->
+  <div id="gameScreen">
+    <div class="player-header">
+      <div class="player-name-display" id="displayName"></div>
+      <div class="room-code-display">Room: <span id="displayRoom"></span></div>
+    </div>
+    <div class="game-msg">
+      <div class="icon">🎲</div>
+      <p>
+        Connected! Watch the main screen to play.<br><br>
+        Your phone is the controller — the game will send prompts here automatically.
+      </p>
+    </div>
+    <button class="btn" onclick="disconnect()" style="background:linear-gradient(135deg,#ff3c3c,#c0006a)">
+      Leave Game
+    </button>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════
+//  КОНФИГУРАЦИЯ — ИЗМЕНИ НА СВОЙ ПРОКСИ-URL
+// ════════════════════════════════════════════
+const PROXY_BASE = "https://jackbox-proxy.onrender.com";
+// Пример: "https://my-jackbox.onrender.com"
+// ════════════════════════════════════════════
+
+const ECAST_WS    = PROXY_BASE.replace(/^https?/, "wss") + "/ecast";
+const BLOBCAST_WS = PROXY_BASE.replace(/^https?/, "wss") + "/blobcast";
+const API_BASE    = PROXY_BASE + "/api/v2";
+
+document.getElementById("proxyDisplay").textContent = PROXY_BASE.replace("https://","");
+
+let ws = null;
+let currentProtocol = "ecast";
+
+function setStatus(msg, type = "info") {
+  const el = document.getElementById("statusMsg");
+  el.textContent = msg;
+  el.className = "status " + type;
+}
+
+function setLoading(loading) {
+  const btn = document.getElementById("joinBtn");
+  btn.disabled = loading;
+  btn.innerHTML = loading
+    ? '<span class="dots"><span></span><span></span><span></span></span>'
+    : "JOIN";
+}
+
+async function detectProtocol(code) {
+  // Попробуем ecast (API v2) — Pack 7+
+  try {
+    const r = await fetch(`${API_BASE}/rooms/${code.toUpperCase()}`, { signal: AbortSignal.timeout(4000) });
+    if (r.ok) return "ecast";
+  } catch (_) {}
+  // Если не ответил — используем blobcast
+  return "blobcast";
+}
+
+async function joinRoom() {
+  const code = document.getElementById("roomCode").value.trim().toUpperCase();
+  const name = document.getElementById("playerName").value.trim();
+
+  if (code.length !== 4) return setStatus("Enter a 4-letter room code", "error");
+  if (!name)             return setStatus("Enter your name", "error");
+
+  setLoading(true);
+  setStatus("Looking up room…", "info");
+
+  // Auto-detect protocol
+  currentProtocol = await detectProtocol(code);
+  setStatus(`Connecting via ${currentProtocol}…`, "info");
+
+  const wsUrl = currentProtocol === "ecast" ? ECAST_WS : BLOBCAST_WS;
+
+  try {
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      // Send join message depending on protocol
+      if (currentProtocol === "ecast") {
+        ws.send(JSON.stringify({
+          opcode: "client/join",
+          params: { roomid: code, name, format: "json" }
+        }));
+      } else {
+        // Blobcast / socket.io-like
+        ws.send(JSON.stringify({
+          action: "room/join",
+          args: { roomid: code, name, role: "player" }
+        }));
+      }
+    };
+
+    ws.onmessage = (evt) => {
+      try {
+        const msg = JSON.parse(evt.data);
+        handleMessage(msg, code, name);
+      } catch (_) {}
+    };
+
+    ws.onerror = () => {
+      setLoading(false);
+      setStatus("Connection error. Check the room code.", "error");
+    };
+
+    ws.onclose = (e) => {
+      setLoading(false);
+      if (e.code !== 1000) {
+        showJoinScreen();
+        setStatus("Disconnected from room.", "error");
+      }
+    };
+
+    // Timeout for no response
+    setTimeout(() => {
+      if (ws && ws.readyState !== WebSocket.OPEN) {
+        setLoading(false);
+        setStatus("Timeout — is the proxy running?", "error");
+      }
+    }, 8000);
+
+  } catch (err) {
+    setLoading(false);
+    setStatus("Failed to connect: " + err.message, "error");
+  }
+}
+
+function handleMessage(msg, code, name) {
+  const opcode = msg.opcode || msg.action || "";
+
+  if (opcode.includes("connected") || opcode.includes("join") || opcode === "client/welcome") {
+    setLoading(false);
+    showGameScreen(name, code);
+    return;
+  }
+  if (opcode.includes("error")) {
+    setLoading(false);
+    setStatus(msg.message || msg.args?.message || "Room not found", "error");
+    ws && ws.close();
+    return;
+  }
+
+  // Forward all other game messages — game UI is on the TV, but we can log
+  console.log("[game msg]", msg);
+}
+
+function showGameScreen(name, code) {
+  document.getElementById("joinScreen").style.display = "none";
+  document.getElementById("proxyHint").style.display  = "none";
+  const gs = document.getElementById("gameScreen");
+  gs.style.display = "flex";
+  document.getElementById("displayName").textContent = name;
+  document.getElementById("displayRoom").textContent = code;
+}
+
+function showJoinScreen() {
+  document.getElementById("gameScreen").style.display = "none";
+  document.getElementById("joinScreen").style.display = "block";
+  document.getElementById("proxyHint").style.display  = "block";
+}
+
+function disconnect() {
+  if (ws) { ws.close(1000); ws = null; }
+  showJoinScreen();
+  setStatus("", "");
+}
+
+// Auto-format room code input
+document.getElementById("roomCode").addEventListener("input", function() {
+  this.value = this.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+});
+
+// Enter key support
+document.addEventListener("keydown", e => {
+  if (e.key === "Enter") joinRoom();
+});
+</script>
+</body>
+</html>
