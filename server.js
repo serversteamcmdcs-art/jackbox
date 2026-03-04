@@ -1,47 +1,41 @@
 /**
- * JackboxAllVersions Server
- * Supports:
- *  - Ecast / API v2  → Party Pack 7, 8, 9, 10, Drawful 2 International, etc.
- *  - Blobcast / API v1 → Party Pack 1–6, Quiplash 2 InterLASHional, etc.
+ * Jackbox Proxy Server
+ * Точная копия jb-ecast.klucva.ru — прокси к официальным серверам Jackbox.
  *
- * Deploy on Render.com — no TLS config needed (Render handles it).
+ * Как работает:
+ *  - HTTP API запросы → проксирует на ecast.jackboxgames.com
+ *  - Ecast WebSocket  → проксирует на wss://ecast.jackboxgames.com
+ *  - Blobcast Socket.IO → проксирует на wss://blobcast.jackboxgames.com
+ *
+ * Деплой: Render.com / Railway / любой Node хостинг
+ * Переменные окружения:
+ *   PORT            — порт (Render проставляет сам)
+ *   ACCESSIBLE_HOST — твой домен (твой-сервис.onrender.com)
  */
 
 const http = require('http');
+const https = require('https');
 const { WebSocketServer, WebSocket } = require('ws');
-const { Server: SocketIOServer } = require('socket.io');
 const url = require('url');
-const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.ACCESSIBLE_HOST || 'localhost';
 
-// ─── Shared State ──────────────────────────────────────────────────────────────
-// rooms: Map<roomCode, roomObject>
-const rooms = new Map();
+// ─── Официальные серверы Jackbox ───────────────────────────────────────────────
+const ECAST_HOST    = 'ecast.jackboxgames.com';
+const BLOBCAST_HOST = 'blobcast.jackboxgames.com';
+const ECAST_WS      = `wss://${ECAST_HOST}`;
+const BLOBCAST_WS   = `wss://${BLOBCAST_HOST}`;
 
-function generateRoomCode() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // no I/O to avoid confusion
-  let code;
-  do {
-    code = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-  } while (rooms.has(code));
-  return code;
-}
-
-function generateId() {
-  return crypto.randomBytes(8).toString('hex');
-}
-
-// ─── HTTP Server ───────────────────────────────────────────────────────────────
-const httpServer = http.createServer((req, res) => {
+// ─── HTTP сервер ───────────────────────────────────────────────────────────────
+const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
   const path = parsed.pathname;
 
-  res.setHeader('Content-Type', 'application/json');
+  // CORS для jackbox.fun и jackbox.tv
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -49,377 +43,179 @@ const httpServer = http.createServer((req, res) => {
     return;
   }
 
-  // ── ECAST (API v2) endpoints ────────────────────────────────────────────────
-  // GET /api/v2/rooms/:code  — join/info
-  const roomMatch = path.match(/^\/api\/v2\/rooms\/([A-Z]{4})$/i);
-  if (req.method === 'GET' && roomMatch) {
-    const code = roomMatch[1].toUpperCase();
-    const room = rooms.get(code);
-    if (!room || room.protocol !== 'ecast') {
-      res.writeHead(404);
-      res.end(JSON.stringify({ message: 'room not found' }));
-      return;
-    }
+  // Корень — заглушка как у оригинала
+  if (path === '/' || path === '') {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.writeHead(200);
-    res.end(JSON.stringify(buildEcastRoomInfo(room)));
+    res.end(`Замена серверам джекбокса для России`);
     return;
   }
 
-  // POST /api/v2/rooms  — create room
-  if (req.method === 'POST' && path === '/api/v2/rooms') {
-    let body = '';
-    req.on('data', d => (body += d));
-    req.on('end', () => {
-      let parsed2 = {};
-      try { parsed2 = JSON.parse(body); } catch (_) {}
-      const code = generateRoomCode();
-      const room = {
-        code,
-        protocol: 'ecast',
-        appTag: parsed2.appTag || 'unknown',
-        appId: parsed2.appId || generateId(),
-        host: null,         // WebSocket of host
-        clients: new Map(), // id -> { ws, name, blob }
-        blob: {},           // game state blob
-        locked: false,
-        created: Date.now(),
-      };
-      rooms.set(code, room);
-      console.log(`[ECAST] Room created: ${code} (${room.appTag})`);
-      res.writeHead(200);
-      res.end(JSON.stringify(buildEcastRoomInfo(room)));
-    });
-    return;
-  }
-
-  // ── BLOBCAST (API v1) endpoints ─────────────────────────────────────────────
-  // GET /room/:code/  — join info (old games)
-  const blobRoomMatch = path.match(/^\/room\/([A-Z]{4})\/?$/i);
-  if (req.method === 'GET' && blobRoomMatch) {
-    const code = blobRoomMatch[1].toUpperCase();
-    const room = rooms.get(code);
-    if (!room || room.protocol !== 'blobcast') {
-      res.writeHead(404);
-      res.end(JSON.stringify({ success: false, message: 'room not found' }));
-      return;
-    }
-    res.writeHead(200);
-    res.end(JSON.stringify(buildBlobcastRoomInfo(room)));
-    return;
-  }
-
-  // POST /room  — create blobcast room
-  if (req.method === 'POST' && path === '/room') {
-    let body = '';
-    req.on('data', d => (body += d));
-    req.on('end', () => {
-      let parsed2 = {};
-      try { parsed2 = JSON.parse(body); } catch (_) {}
-      const code = generateRoomCode();
-      const room = {
-        code,
-        protocol: 'blobcast',
-        appTag: parsed2.apptag || parsed2.appTag || 'unknown',
-        host: null,
-        clients: new Map(),
-        blob: {},
-        locked: false,
-        created: Date.now(),
-      };
-      rooms.set(code, room);
-      console.log(`[BLOBCAST] Room created: ${code} (${room.appTag})`);
-      res.writeHead(200);
-      res.end(JSON.stringify(buildBlobcastRoomInfo(room)));
-    });
-    return;
-  }
-
-  // ── Health check ─────────────────────────────────────────────────────────────
-  if (path === '/health' || path === '/') {
-    res.writeHead(200);
-    res.end(JSON.stringify({
-      status: 'ok',
-      rooms: rooms.size,
-      protocols: ['ecast-v2', 'blobcast-v1'],
-    }));
-    return;
-  }
-
-  res.writeHead(404);
-  res.end(JSON.stringify({ message: 'not found' }));
+  // Всё остальное — проксируем на официальный ecast
+  proxyHttpRequest(req, res, ECAST_HOST);
 });
 
-// ─── Room Info Builders ────────────────────────────────────────────────────────
-function buildEcastRoomInfo(room) {
-  return {
-    roomid: room.code,
-    server: {
-      name: room.appTag,
-      connectionstring: `wss://${HOST}/ecast`,
-    },
-    blob: room.blob,
-    locked: room.locked,
-    full: room.clients.size >= 16,
-    moderation: { commenting: false },
-    appTag: room.appTag,
-    appId: room.appId,
+// ─── HTTP прокси ───────────────────────────────────────────────────────────────
+function proxyHttpRequest(req, res, targetHost) {
+  let body = [];
+
+  req.on('data', chunk => body.push(chunk));
+  req.on('end', () => {
+    const bodyData = Buffer.concat(body);
+
+    const options = {
+      hostname: targetHost,
+      port: 443,
+      path: req.url,
+      method: req.method,
+      headers: {
+        ...req.headers,
+        host: targetHost,
+        'x-forwarded-for': req.socket.remoteAddress,
+      },
+    };
+
+    // Убираем заголовки которые ломают прокси
+    delete options.headers['content-length'];
+    if (bodyData.length > 0) {
+      options.headers['content-length'] = bodyData.length;
+    }
+
+    const proxy = https.request(options, (proxyRes) => {
+      // Добавляем CORS к ответу от jackbox
+      const headers = { ...proxyRes.headers };
+      headers['access-control-allow-origin'] = '*';
+      headers['access-control-allow-headers'] = 'Content-Type, Authorization';
+
+      res.writeHead(proxyRes.statusCode, headers);
+      proxyRes.pipe(res);
+    });
+
+    proxy.on('error', (err) => {
+      console.error(`[HTTP PROXY] Error: ${err.message}`);
+      if (!res.headersSent) {
+        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'proxy error', message: err.message }));
+      }
+    });
+
+    if (bodyData.length > 0) proxy.write(bodyData);
+    proxy.end();
+  });
+}
+
+// ─── WebSocket прокси (универсальный) ─────────────────────────────────────────
+function createWsProxy(targetUrlBase) {
+  return function handleClientWs(clientWs, request) {
+    const clientPath = request.url || '/';
+    const targetUrl  = targetUrlBase + clientPath;
+
+    console.log(`[WS PROXY] ${request.socket.remoteAddress} → ${targetUrl}`);
+
+    const targetWs = new WebSocket(targetUrl, {
+      headers: {
+        'origin': 'https://jackbox.tv',
+        'user-agent': request.headers['user-agent'] || 'Mozilla/5.0',
+      },
+      rejectUnauthorized: false,
+    });
+
+    // Буфер сообщений пока target не открылся
+    const queue = [];
+
+    // Клиент → Jackbox
+    clientWs.on('message', (data, isBinary) => {
+      if (targetWs.readyState === WebSocket.OPEN) {
+        targetWs.send(data, { binary: isBinary });
+      } else {
+        queue.push({ data, isBinary });
+      }
+    });
+
+    // Jackbox → Клиент
+    targetWs.on('open', () => {
+      // Слить буфер
+      while (queue.length > 0) {
+        const { data, isBinary } = queue.shift();
+        targetWs.send(data, { binary: isBinary });
+      }
+    });
+
+    targetWs.on('message', (data, isBinary) => {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.send(data, { binary: isBinary });
+      }
+    });
+
+    // Закрытия
+    clientWs.on('close', (code, reason) => {
+      if (targetWs.readyState === WebSocket.OPEN || targetWs.readyState === WebSocket.CONNECTING) {
+        targetWs.close(code, reason);
+      }
+    });
+
+    targetWs.on('close', (code, reason) => {
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.close(code, reason);
+      }
+    });
+
+    // Ошибки
+    clientWs.on('error', (err) => {
+      console.error(`[WS CLIENT] Error: ${err.message}`);
+      targetWs.terminate();
+    });
+
+    targetWs.on('error', (err) => {
+      console.error(`[WS TARGET → ${targetUrlBase}] Error: ${err.message}`);
+      if (clientWs.readyState === WebSocket.OPEN) {
+        clientWs.close(1011, 'upstream error');
+      }
+    });
   };
 }
 
-function buildBlobcastRoomInfo(room) {
-  return {
-    success: true,
-    room: {
-      roomid: room.code,
-      server: `wss://${HOST}/blobcast`,
-      apptag: room.appTag,
-      blob: JSON.stringify(room.blob),
-      locked: room.locked,
-    },
-  };
-}
+// ─── WebSocket серверы ─────────────────────────────────────────────────────────
+// Ecast WS: /api/v2/rooms/... и /ecast/...
+const ecastWss    = new WebSocketServer({ noServer: true });
+// Blobcast Socket.IO polling/ws: /socket.io/... и /blobcast/...
+const blobcastWss = new WebSocketServer({ noServer: true });
 
-// ─── ECAST WebSocket (/ecast) ──────────────────────────────────────────────────
-const ecastWss = new WebSocketServer({ noServer: true });
+ecastWss.on('connection',    createWsProxy(ECAST_WS));
+blobcastWss.on('connection', createWsProxy(BLOBCAST_WS));
 
-ecastWss.on('connection', (ws, request) => {
-  const query = url.parse(request.url, true).query;
-  const role = query.role || 'player';        // 'host' or 'player'
-  const roomCode = (query.roomid || '').toUpperCase();
-  const clientId = generateId();
+// ─── HTTP Upgrade → правильный WSS ────────────────────────────────────────────
+server.on('upgrade', (request, socket, head) => {
+  const pathname = url.parse(request.url).pathname || '/';
 
-  const room = rooms.get(roomCode);
-  if (!room || room.protocol !== 'ecast') {
-    ws.close(4004, 'room not found');
-    return;
-  }
+  // Blobcast: Socket.IO пути и старые /socket.io/
+  const isBlobcast =
+    pathname.startsWith('/socket.io') ||
+    pathname.startsWith('/blobcast')  ||
+    pathname.includes('EIO=');         // socket.io query fallback
 
-  console.log(`[ECAST] ${role} connected to ${roomCode} (id=${clientId})`);
-
-  function sendTo(target, msg) {
-    if (target && target.readyState === WebSocket.OPEN) {
-      target.send(JSON.stringify(msg));
-    }
-  }
-
-  function broadcast(msg, excludeWs) {
-    room.clients.forEach(({ ws: cws }) => {
-      if (cws !== excludeWs) sendTo(cws, msg);
+  if (isBlobcast) {
+    blobcastWss.handleUpgrade(request, socket, head, (ws) => {
+      blobcastWss.emit('connection', ws, request);
     });
-    if (room.host && room.host !== excludeWs) sendTo(room.host, msg);
-  }
-
-  if (role === 'host') {
-    room.host = ws;
-    sendTo(ws, { opcode: 'connected', roomid: roomCode });
   } else {
-    const name = query.name || `Player_${clientId.slice(0, 4)}`;
-    room.clients.set(clientId, { ws, name, blob: {} });
-
-    sendTo(ws, { opcode: 'client/connected', id: clientId });
-
-    // notify host
-    sendTo(room.host, {
-      opcode: 'client/connected',
-      id: clientId,
-      name,
-      blob: {},
-    });
-  }
-
-  ws.on('message', (data) => {
-    let msg;
-    try { msg = JSON.parse(data); } catch (_) { return; }
-
-    const op = msg.opcode || msg.type;
-
-    // Host → all clients
-    if (role === 'host') {
-      if (op === 'client/send' && msg.id) {
-        const target = room.clients.get(msg.id);
-        if (target) sendTo(target.ws, { opcode: 'server/send', body: msg.body });
-      } else if (op === 'broadcast') {
-        room.clients.forEach(({ ws: cws }) => {
-          sendTo(cws, { opcode: 'server/send', body: msg.body });
-        });
-      } else if (op === 'room/update') {
-        if (msg.blob) room.blob = { ...room.blob, ...msg.blob };
-        if (typeof msg.locked === 'boolean') room.locked = msg.locked;
-        broadcast({ opcode: 'room/update', blob: room.blob, locked: room.locked }, ws);
-      }
-    }
-
-    // Client → host
-    if (role === 'player') {
-      if (op === 'client/send' || op === 'send') {
-        sendTo(room.host, {
-          opcode: 'client/send',
-          id: clientId,
-          body: msg.body,
-        });
-      } else if (op === 'client/update' && msg.blob) {
-        const client = room.clients.get(clientId);
-        if (client) client.blob = { ...client.blob, ...msg.blob };
-        sendTo(room.host, {
-          opcode: 'client/update',
-          id: clientId,
-          blob: room.clients.get(clientId)?.blob,
-        });
-      }
-    }
-  });
-
-  ws.on('close', () => {
-    if (role === 'host') {
-      console.log(`[ECAST] Host left ${roomCode}, closing room`);
-      room.clients.forEach(({ ws: cws }) => cws.close(1001, 'host left'));
-      rooms.delete(roomCode);
-    } else {
-      room.clients.delete(clientId);
-      console.log(`[ECAST] Player ${clientId} left ${roomCode}`);
-      sendTo(room.host, { opcode: 'client/disconnected', id: clientId });
-    }
-  });
-
-  ws.on('error', (err) => console.error(`[ECAST] WS error: ${err.message}`));
-});
-
-// ─── BLOBCAST Socket.IO (/blobcast) ────────────────────────────────────────────
-// Old games (Pack 1–6) use Socket.IO v1/v2 (EIO=3)
-const blobcastIO = new SocketIOServer(httpServer, {
-  path: '/blobcast',
-  cors: { origin: '*', methods: ['GET', 'POST'] },
-  // allow old EIO=3 clients (socket.io v1/v2)
-  allowEIO3: true,
-  transports: ['websocket', 'polling'],
-});
-
-blobcastIO.on('connection', (socket) => {
-  const query = socket.handshake.query;
-  const role = query.role || 'player';
-  const roomCode = (query.roomid || '').toUpperCase();
-  const clientId = generateId();
-
-  const room = rooms.get(roomCode);
-  if (!room || room.protocol !== 'blobcast') {
-    socket.emit('error', { message: 'room not found' });
-    socket.disconnect(true);
-    return;
-  }
-
-  console.log(`[BLOBCAST] ${role} connected to ${roomCode} (id=${clientId})`);
-
-  function emitToHost(event, data) {
-    if (room.hostSocketId) {
-      blobcastIO.to(room.hostSocketId).emit(event, data);
-    }
-  }
-
-  if (role === 'host') {
-    room.hostSocketId = socket.id;
-    socket.join(roomCode);
-    socket.emit('connected', { roomid: roomCode });
-  } else {
-    const name = query.name || `Player_${clientId.slice(0, 4)}`;
-    room.clients.set(clientId, { socketId: socket.id, name, blob: {} });
-    socket.join(roomCode);
-
-    socket.emit('client/connected', { id: clientId });
-    emitToHost('client/connected', { id: clientId, name, blob: {} });
-  }
-
-  // Client → Host
-  socket.on('send', (data) => {
-    if (role === 'player') {
-      emitToHost('client/send', { id: clientId, body: data });
-    }
-  });
-
-  socket.on('client/send', (data) => {
-    if (role === 'player') {
-      emitToHost('client/send', { id: clientId, body: data });
-    }
-  });
-
-  // Host → Client(s)
-  socket.on('broadcast', (data) => {
-    if (role === 'host') {
-      room.clients.forEach(({ socketId }) => {
-        blobcastIO.to(socketId).emit('server/send', data);
-      });
-    }
-  });
-
-  socket.on('client/send', (data) => {
-    if (role === 'host' && data.id) {
-      const client = room.clients.get(data.id);
-      if (client) {
-        blobcastIO.to(client.socketId).emit('server/send', data.body);
-      }
-    }
-  });
-
-  socket.on('room/update', (data) => {
-    if (role === 'host') {
-      if (data.blob) room.blob = { ...room.blob, ...data.blob };
-      if (typeof data.locked === 'boolean') room.locked = data.locked;
-      socket.to(roomCode).emit('room/update', { blob: room.blob, locked: room.locked });
-    }
-  });
-
-  // Blob update from client
-  socket.on('client/update', (data) => {
-    if (role === 'player') {
-      const client = room.clients.get(clientId);
-      if (client && data.blob) {
-        client.blob = { ...client.blob, ...data.blob };
-        emitToHost('client/update', { id: clientId, blob: client.blob });
-      }
-    }
-  });
-
-  socket.on('disconnect', () => {
-    if (role === 'host') {
-      console.log(`[BLOBCAST] Host left ${roomCode}, closing room`);
-      blobcastIO.to(roomCode).emit('disconnect', { reason: 'host left' });
-      rooms.delete(roomCode);
-    } else {
-      room.clients.delete(clientId);
-      console.log(`[BLOBCAST] Player ${clientId} left ${roomCode}`);
-      emitToHost('client/disconnected', { id: clientId });
-    }
-  });
-});
-
-// ─── HTTP Upgrade → route to correct WSS ──────────────────────────────────────
-httpServer.on('upgrade', (request, socket, head) => {
-  const pathname = url.parse(request.url).pathname;
-
-  if (pathname === '/ecast' || pathname.startsWith('/ecast?')) {
+    // Всё остальное (Ecast, /api/v2/, /ecast) → ecast
     ecastWss.handleUpgrade(request, socket, head, (ws) => {
       ecastWss.emit('connection', ws, request);
     });
   }
-  // /blobcast is handled by socket.io internally via httpServer
 });
 
-// ─── Cleanup stale rooms every 30 min ─────────────────────────────────────────
-setInterval(() => {
-  const now = Date.now();
-  rooms.forEach((room, code) => {
-    if (now - room.created > 30 * 60 * 1000) {
-      console.log(`[CLEANUP] Removing stale room ${code}`);
-      rooms.delete(code);
-    }
-  });
-}, 5 * 60 * 1000);
+// ─── Запуск ────────────────────────────────────────────────────────────────────
+server.listen(PORT, () => {
+  console.log(`
+✅ Jackbox Proxy Server запущен на порту ${PORT}
+   Твой домен:    ${HOST}
+   Ecast прокси:  wss://${HOST}  →  ${ECAST_WS}
+   Blobcast:      wss://${HOST}  →  ${BLOBCAST_WS}
+   HTTP API:      https://${HOST} →  https://${ECAST_HOST}
 
-// ─── Start ────────────────────────────────────────────────────────────────────
-httpServer.listen(PORT, () => {
-  console.log(`\n✅ Jackbox All-Versions Server running on port ${PORT}`);
-  console.log(`   Host:       ${HOST}`);
-  console.log(`   Ecast WS:   wss://${HOST}/ecast`);
-  console.log(`   Blobcast:   wss://${HOST}/blobcast`);
-  console.log(`   API v2:     https://${HOST}/api/v2/rooms`);
-  console.log(`   API v1:     https://${HOST}/room\n`);
+   Используй в игре:
+   -jbg.config serverUrl=${HOST}
+`);
 });
