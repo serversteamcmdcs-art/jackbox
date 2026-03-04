@@ -1,7 +1,6 @@
 const express = require('express');
-const { createProxyMiddleware, responseInterceptor } = require('http-proxy-middleware');
 const path = require('path');
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
+const { createProxyMiddleware, responseInterceptor } = require('http-proxy-middleware');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
@@ -44,7 +43,8 @@ const ecastProxy = createProxyMiddleware({
   },
 });
 
-app.get('/health', (req, res) => res.send('OK'));
+// Главная страница
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 app.use('/blobcast', blobcastProxy);
 app.use('/ecast', ecastProxy);
@@ -57,7 +57,6 @@ app.use('/', (req, res, next) => {
   return ecastProxy(req, res, next);
 });
 
-// Слушаем явно на 0.0.0.0 — это критично для Render
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log('Jackbox proxy running on 0.0.0.0:' + PORT);
   console.log('My host: ' + MY_HOST);
