@@ -17,6 +17,7 @@ const http = require('http');
 const https = require('https');
 const { WebSocketServer, WebSocket } = require('ws');
 const url = require('url');
+const fs = require('fs');
 const path = require('path');
 
 const PORT = process.env.PORT || 3000;
@@ -31,10 +32,45 @@ const BLOBCAST_HOST = 'blobcast.jackboxgames.com';
 const ECAST_WS      = `wss://${ECAST_HOST}`;
 const BLOBCAST_WS   = `wss://${BLOBCAST_HOST}`;
 
+// ─── Статические файлы из client/ ─────────────────────────────────────────────
+const CLIENT_DIR = path.join(__dirname, 'client');
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.htm':  'text/html; charset=utf-8',
+  '.css':  'text/css; charset=utf-8',
+  '.js':   'application/javascript; charset=utf-8',
+  '.json': 'application/json',
+  '.png':  'image/png',
+  '.jpg':  'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif':  'image/gif',
+  '.svg':  'image/svg+xml',
+  '.ico':  'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2':'font/woff2',
+  '.ttf':  'font/ttf',
+};
+
+function serveStaticFile(filePath, res) {
+  const ext = path.extname(filePath).toLowerCase();
+  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+
+  fs.readFile(filePath, (err, data) => {
+    if (err) {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('404 Not Found');
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': contentType });
+    res.end(data);
+  });
+}
+
 // ─── HTTP сервер ───────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
-  const path = parsed.pathname;
+  const reqPath = parsed.pathname;
 
   // CORS для jackbox.fun и jackbox.tv
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -47,16 +83,41 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Корень — заглушка как у оригинала
-  if (path === '/' || path === '') {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    res.writeHead(200);
-    res.end(`Замена серверам джекбокса для России`);
+  // Корень — отдаём client/index.htm
+  if (reqPath === '/' || reqPath === '') {
+    const indexFile = path.join(CLIENT_DIR, 'index.htm');
+    fs.access(indexFile, fs.constants.F_OK, (err) => {
+      if (err) {
+        // Файл не найден — заглушка
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.writeHead(200);
+        res.end(`Замена серверам джекбокса для России`);
+      } else {
+        serveStaticFile(indexFile, res);
+      }
+    });
     return;
   }
 
-  // Всё остальное — проксируем на официальный ecast
-  proxyHttpRequest(req, res, ECAST_HOST);
+  // Статические файлы из client/ (CSS, JS, картинки и т.д.)
+  // Запросы вида /style.css, /script.js, /assets/... → ищем в client/
+  const staticFilePath = path.join(CLIENT_DIR, reqPath);
+  // Защита от path traversal
+  if (!staticFilePath.startsWith(CLIENT_DIR)) {
+    res.writeHead(403);
+    res.end('Forbidden');
+    return;
+  }
+
+  fs.access(staticFilePath, fs.constants.F_OK, (err) => {
+    if (!err) {
+      // Файл существует в client/ — отдаём его
+      serveStaticFile(staticFilePath, res);
+    } else {
+      // Не нашли в client/ — проксируем на официальный ecast
+      proxyHttpRequest(req, res, ECAST_HOST);
+    }
+  });
 });
 
 // ─── HTTP прокси ───────────────────────────────────────────────────────────────
