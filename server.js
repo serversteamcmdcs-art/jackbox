@@ -1,5 +1,7 @@
 const express = require('express');
 const { createProxyMiddleware, responseInterceptor } = require('http-proxy-middleware');
+const path = require('path');
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 
 const app = express();
 const PORT = process.env.PORT || 10000;
