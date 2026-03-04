@@ -2,12 +2,9 @@ const express = require('express');
 const { createProxyMiddleware, responseInterceptor } = require('http-proxy-middleware');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
+const MY_HOST = process.env.RENDER_EXTERNAL_HOSTNAME || 'jackbox-k17q.onrender.com';
 
-// Твой домен на Render (подставляется автоматически)
-const MY_HOST = process.env.RENDER_EXTERNAL_HOSTNAME || 'jackbox-proxy.onrender.com';
-
-// ─── Blobcast прокси (PP1-PP6) ───────────────────────────────────────────────
 const blobcastProxy = createProxyMiddleware({
   target: 'https://blobcast.jackboxgames.com',
   changeOrigin: true,
@@ -21,7 +18,6 @@ const blobcastProxy = createProxyMiddleware({
   },
 });
 
-// ─── Ecast прокси (PP7-PP10) с подменой URL в ответе ────────────────────────
 const ecastProxy = createProxyMiddleware({
   target: 'https://ecast.jackboxgames.com',
   changeOrigin: true,
@@ -33,16 +29,8 @@ const ecastProxy = createProxyMiddleware({
       const contentType = proxyRes.headers['content-type'] || '';
       if (contentType.includes('application/json')) {
         let body = responseBuffer.toString('utf8');
-        // Подменяем blobcast адрес на наш прокси (для PP6)
-        body = body.replace(
-          /https?:\/\/blobcast\.jackboxgames\.com/g,
-          'https://' + MY_HOST + '/blobcast'
-        );
-        // Подменяем ecast адрес на наш прокси
-        body = body.replace(
-          /https?:\/\/ecast\.jackboxgames\.com/g,
-          'https://' + MY_HOST + '/ecast'
-        );
+        body = body.replace(/https?:\/\/blobcast\.jackboxgames\.com/g, 'https://' + MY_HOST + '/blobcast');
+        body = body.replace(/https?:\/\/ecast\.jackboxgames\.com/g, 'https://' + MY_HOST + '/ecast');
         return Buffer.from(body, 'utf8');
       }
       return responseBuffer;
@@ -54,11 +42,11 @@ const ecastProxy = createProxyMiddleware({
   },
 });
 
-// ─── Маршруты ────────────────────────────────────────────────────────────────
+app.get('/health', (req, res) => res.send('OK'));
+
 app.use('/blobcast', blobcastProxy);
 app.use('/ecast', ecastProxy);
 
-// Fallback
 app.use('/', (req, res, next) => {
   const url = req.url;
   if (url.includes('/room/') || url.includes('/socket.io')) {
@@ -67,9 +55,9 @@ app.use('/', (req, res, next) => {
   return ecastProxy(req, res, next);
 });
 
-// ─── Сервер + WebSocket ──────────────────────────────────────────────────────
-const server = app.listen(PORT, () => {
-  console.log('Jackbox proxy running on port ' + PORT);
+// Слушаем явно на 0.0.0.0 — это критично для Render
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log('Jackbox proxy running on 0.0.0.0:' + PORT);
   console.log('My host: ' + MY_HOST);
 });
 
