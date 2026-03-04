@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jackbox — Войти в игру</title>
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&family=Nunito+Sans:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d0d1a;
+    --surface: #16162a;
+    --accent: #f0c040;
+    --accent2: #ff5f7e;
+    --accent3: #5ee7ff;
+    --text: #f0eeff;
+    --muted: #8880b0;
+    --radius: 18px;
+    --glow: 0 0 40px rgba(240,192,64,0.18);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Nunito Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* animated background blobs */
+  .blob {
+    position: fixed;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: 0.18;
+    animation: drift 12s ease-in-out infinite alternate;
+    pointer-events: none;
+    z-index: 0;
+  }
+  .blob1 { width: 500px; height: 500px; background: #f0c040; top: -150px; left: -150px; animation-delay: 0s; }
+  .blob2 { width: 400px; height: 400px; background: #ff5f7e; bottom: -120px; right: -100px; animation-delay: -4s; }
+  .blob3 { width: 300px; height: 300px; background: #5ee7ff; top: 40%; left: 60%; animation-delay: -8s; }
+
+  @keyframes drift {
+    from { transform: translate(0, 0) scale(1); }
+    to   { transform: translate(40px, 30px) scale(1.08); }
+  }
+
+  /* stars */
+  .stars {
+    position: fixed; inset: 0; pointer-events: none; z-index: 0;
+    background-image:
+      radial-gradient(1px 1px at 15% 25%, rgba(255,255,255,0.5) 0%, transparent 100%),
+      radial-gradient(1px 1px at 72% 14%, rgba(255,255,255,0.4) 0%, transparent 100%),
+      radial-gradient(1px 1px at 40% 80%, rgba(255,255,255,0.3) 0%, transparent 100%),
+      radial-gradient(1px 1px at 88% 55%, rgba(255,255,255,0.5) 0%, transparent 100%),
+      radial-gradient(1px 1px at 5% 65%, rgba(255,255,255,0.3) 0%, transparent 100%),
+      radial-gradient(1px 1px at 60% 40%, rgba(255,255,255,0.2) 0%, transparent 100%);
+  }
+
+  .container {
+    position: relative; z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    animation: fadeUp 0.7s cubic-bezier(.22,1,.36,1) both;
+  }
+
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(32px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .logo {
+    font-family: 'Nunito', sans-serif;
+    font-weight: 900;
+    font-size: clamp(2.2rem, 6vw, 3.4rem);
+    letter-spacing: -1px;
+    color: var(--accent);
+    text-shadow: 0 0 30px rgba(240,192,64,0.5);
+    margin-bottom: 6px;
+    user-select: none;
+  }
+  .logo span { color: var(--accent2); }
+
+  .tagline {
+    font-size: 1rem;
+    color: var(--muted);
+    margin-bottom: 40px;
+    letter-spacing: 0.5px;
+  }
+
+  .card {
+    background: var(--surface);
+    border: 1.5px solid rgba(255,255,255,0.07);
+    border-radius: var(--radius);
+    padding: 40px 44px 36px;
+    width: min(420px, 92vw);
+    box-shadow: 0 20px 60px rgba(0,0,0,0.5), var(--glow);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .card-title {
+    font-family: 'Nunito', sans-serif;
+    font-weight: 900;
+    font-size: 1.3rem;
+    color: var(--text);
+    text-align: center;
+    margin-bottom: 4px;
+  }
+
+  .field-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    margin-bottom: 6px;
+  }
+
+  .field { display: flex; flex-direction: column; }
+
+  input[type="text"] {
+    background: rgba(255,255,255,0.06);
+    border: 1.5px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    color: var(--text);
+    font-family: 'Nunito', sans-serif;
+    font-size: 1rem;
+    font-weight: 700;
+    padding: 14px 18px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    letter-spacing: 1px;
+  }
+  input[type="text"]:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(240,192,64,0.15);
+  }
+  input[type="text"]::placeholder { color: rgba(255,255,255,0.2); font-weight: 400; letter-spacing: 0; }
+
+  #room-code {
+    text-transform: uppercase;
+    font-size: 1.5rem;
+    text-align: center;
+    letter-spacing: 6px;
+  }
+
+  .btn {
+    font-family: 'Nunito', sans-serif;
+    font-weight: 900;
+    font-size: 1.1rem;
+    padding: 16px;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s, filter 0.15s;
+    width: 100%;
+    letter-spacing: 0.5px;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn-primary {
+    background: var(--accent);
+    color: #1a1000;
+    box-shadow: 0 4px 20px rgba(240,192,64,0.35);
+  }
+  .btn-primary:hover { filter: brightness(1.08); box-shadow: 0 6px 28px rgba(240,192,64,0.5); }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; filter: none; }
+
+  .divider {
+    display: flex; align-items: center; gap: 12px;
+    color: var(--muted); font-size: 0.8rem;
+  }
+  .divider::before, .divider::after {
+    content: ''; flex: 1; height: 1px; background: rgba(255,255,255,0.08);
+  }
+
+  /* status */
+  .status {
+    font-size: 0.88rem;
+    text-align: center;
+    padding: 10px 14px;
+    border-radius: 10px;
+    display: none;
+    font-weight: 600;
+  }
+  .status.error   { background: rgba(255,95,126,0.15); color: #ff8fa3; display: block; }
+  .status.success { background: rgba(94,231,255,0.12); color: #7ff0ff; display: block; }
+  .status.loading { background: rgba(240,192,64,0.1);  color: var(--accent); display: block; }
+
+  /* connected screen */
+  .connected-screen {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    text-align: center;
+  }
+  .connected-screen.active { display: flex; }
+
+  .big-emoji { font-size: 3.5rem; animation: pop 0.4s cubic-bezier(.22,1,.36,1); }
+  @keyframes pop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+  .player-name-badge {
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    color: #1a0010;
+    font-family: 'Nunito', sans-serif;
+    font-weight: 900;
+    font-size: 1.4rem;
+    padding: 10px 28px;
+    border-radius: 50px;
+    letter-spacing: 1px;
+    box-shadow: 0 4px 20px rgba(255,95,126,0.4);
+  }
+
+  .waiting-text { color: var(--muted); font-size: 0.95rem; }
+
+  .pulse-dot {
+    display: inline-block;
+    width: 10px; height: 10px;
+    background: var(--accent3);
+    border-radius: 50%;
+    margin-left: 6px;
+    vertical-align: middle;
+    animation: pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(0.7)} }
+
+  .footer {
+    position: fixed; bottom: 20px;
+    color: rgba(255,255,255,0.15);
+    font-size: 0.75rem;
+    z-index: 1;
+  }
+</style>
+</head>
+<body>
+
+<div class="blob blob1"></div>
+<div class="blob blob2"></div>
+<div class="blob blob3"></div>
+<div class="stars"></div>
+
+<div class="container">
+  <div class="logo">Jack<span>box</span></div>
+  <div class="tagline">Введи код комнаты и nickname — и в бой</div>
+
+  <div class="card" id="join-card">
+    <div class="card-title">Войти в игру</div>
+
+    <div class="field">
+      <div class="field-label">Код комнаты</div>
+      <input type="text" id="room-code" maxlength="4" placeholder="ABCD" autocomplete="off" spellcheck="false">
+    </div>
+
+    <div class="field">
+      <div class="field-label">Твоё имя</div>
+      <input type="text" id="player-name" maxlength="20" placeholder="Введи имя..." autocomplete="off">
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <button class="btn btn-primary" id="join-btn" onclick="joinGame()">Войти в игру 🎮</button>
+
+    <div class="divider">настройки прокси</div>
+
+    <div class="field">
+      <div class="field-label">Адрес сервера</div>
+      <input type="text" id="proxy-url" placeholder="wss://jackbox-proxy.onrender.com">
+    </div>
+  </div>
+
+  <div class="card connected-screen" id="connected-card">
+    <div class="big-emoji" id="emoji">🎉</div>
+    <div class="player-name-badge" id="badge-name"></div>
+    <div style="font-size:1rem; color: var(--muted);">Комната</div>
+    <div style="font-family:'Nunito',sans-serif; font-weight:900; font-size:2rem; letter-spacing:8px; color:var(--accent)" id="badge-room"></div>
+    <div class="waiting-text">Ожидаем начала игры<span class="pulse-dot"></span></div>
+    <button class="btn btn-primary" style="margin-top:8px; background: rgba(255,255,255,0.07); color: var(--muted); box-shadow:none;" onclick="disconnect()">Выйти</button>
+  </div>
+</div>
+
+<div class="footer">Jackbox Proxy Player · все игры поддерживаются</div>
+
+<script>
+  let ws = null;
+  let heartbeat = null;
+
+  const EMOJIS = ['🎮','🎲','🎯','🃏','🎪','🎭','🏆','⚡','🌟','🔥'];
+
+  // Load saved proxy from localStorage-like sessionStorage fallback
+  window.addEventListener('load', () => {
+    const saved = sessionStorage.getItem('proxy_url');
+    if (saved) document.getElementById('proxy-url').value = saved;
+
+    document.getElementById('room-code').addEventListener('input', e => {
+      e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    });
+    document.getElementById('room-code').addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('player-name').focus();
+    });
+    document.getElementById('player-name').addEventListener('keydown', e => {
+      if (e.key === 'Enter') joinGame();
+    });
+  });
+
+  function setStatus(msg, type) {
+    const el = document.getElementById('status');
+    el.textContent = msg;
+    el.className = 'status ' + type;
+  }
+
+  function clearStatus() {
+    const el = document.getElementById('status');
+    el.className = 'status';
+  }
+
+  async function joinGame() {
+    const code    = document.getElementById('room-code').value.trim().toUpperCase();
+    const name    = document.getElementById('player-name').value.trim();
+    let   proxy   = document.getElementById('proxy-url').value.trim().replace(/\/$/, '');
+
+    if (!code || code.length < 4) { setStatus('Введи 4-значный код комнаты', 'error'); return; }
+    if (!name)                     { setStatus('Введи своё имя', 'error'); return; }
+    if (!proxy)                    { setStatus('Укажи адрес прокси-сервера', 'error'); return; }
+
+    sessionStorage.setItem('proxy_url', proxy);
+
+    // Detect protocol — blobcast uses socket.io path
+    const isBlobcast = proxy.includes('/blobcast');
+    const isEcast    = proxy.includes('/ecast') || !isBlobcast;
+
+    setStatus('Подключаемся...', 'loading');
+    document.getElementById('join-btn').disabled = true;
+
+    try {
+      if (isEcast) {
+        await connectEcast(proxy, code, name);
+      } else {
+        await connectBlobcast(proxy, code, name);
+      }
+    } catch (err) {
+      setStatus('Ошибка: ' + err.message, 'error');
+      document.getElementById('join-btn').disabled = false;
+    }
+  }
+
+  function showConnected(name, code) {
+    document.getElementById('join-card').style.display = 'none';
+    const card = document.getElementById('connected-card');
+    card.classList.add('active');
+    document.getElementById('badge-name').textContent = name;
+    document.getElementById('badge-room').textContent = code;
+    document.getElementById('emoji').textContent = EMOJIS[Math.floor(Math.random() * EMOJIS.length)];
+  }
+
+  function disconnect() {
+    if (ws) { ws.close(); ws = null; }
+    if (heartbeat) { clearInterval(heartbeat); heartbeat = null; }
+    document.getElementById('join-card').style.display = 'flex';
+    document.getElementById('connected-card').classList.remove('active');
+    document.getElementById('join-btn').disabled = false;
+    clearStatus();
+  }
+
+  // ── Ecast (API v2 / Pack 7+) ──────────────────────────────────────────
+  async function connectEcast(proxy, code, name) {
+    // 1. Get room info via REST
+    const apiUrl = proxy.replace('wss://', 'https://').replace('ws://', 'http://').replace('/ecast', '');
+    let roomData;
+    try {
+      const resp = await fetch(`${apiUrl}/api/v2/rooms/${code}`);
+      roomData = await resp.json();
+      if (!resp.ok) throw new Error(roomData.message || 'Комната не найдена');
+    } catch(e) {
+      throw new Error('Не удалось найти комнату: ' + e.message);
+    }
+
+    // 2. Connect WebSocket
+    const wsUrl = proxy.startsWith('wss://') || proxy.startsWith('ws://')
+      ? proxy
+      : 'wss://' + proxy;
+
+    ws = new WebSocket(`${wsUrl}/api/v2/rooms/${code}/play`);
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Таймаут подключения')), 10000);
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({
+          opcode: 'client/join',
+          params: { name, userId: 'user-' + Date.now(), roomId: code }
+        }));
+      };
+
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.opcode === 'client/connected' || msg.opcode === 'room/update' || msg.result === 'ok') {
+            clearTimeout(timeout);
+            setStatus('', '');
+            showConnected(name, code);
+            startHeartbeat(ws, 'ecast');
+            resolve();
+          }
+          if (msg.opcode === 'error') {
+            clearTimeout(timeout);
+            reject(new Error(msg.message || 'Ошибка сервера'));
+          }
+        } catch(_) {}
+      };
+
+      ws.onerror = () => { clearTimeout(timeout); reject(new Error('Ошибка WebSocket')); };
+      ws.onclose = (e) => {
+        clearTimeout(timeout);
+        if (document.getElementById('connected-card').classList.contains('active')) {
+          disconnect();
+          setStatus('Соединение разорвано (код ' + e.code + ')', 'error');
+        }
+      };
+    });
+  }
+
+  // ── Blobcast (socket.io / Pack 1–6) ───────────────────────────────────
+  async function connectBlobcast(proxy, code, name) {
+    const wsBase = proxy.startsWith('wss://') || proxy.startsWith('ws://')
+      ? proxy
+      : 'wss://' + proxy;
+
+    // socket.io handshake
+    const httpBase = wsBase.replace('wss://', 'https://').replace('ws://', 'http://');
+    let sid;
+    try {
+      const resp = await fetch(`${httpBase}/socket.io/?EIO=3&transport=polling`);
+      const text = await resp.text();
+      const json = JSON.parse(text.slice(text.indexOf('{')));
+      sid = json.sid;
+    } catch(e) {
+      throw new Error('socket.io handshake failed: ' + e.message);
+    }
+
+    ws = new WebSocket(`${wsBase}/socket.io/?EIO=3&transport=websocket&sid=${sid}`);
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Таймаут подключения')), 10000);
+
+      ws.onopen = () => {
+        ws.send('2probe'); // socket.io upgrade
+      };
+
+      ws.onmessage = (e) => {
+        const data = e.data;
+        if (data === '3probe') {
+          ws.send('5'); // upgrade confirm
+          // Join room
+          ws.send('42' + JSON.stringify(['msg', JSON.stringify({
+            action: 'room/join',
+            args: { roomid: code, name }
+          })]));
+          return;
+        }
+        if (data.startsWith('42')) {
+          try {
+            const payload = JSON.parse(data.slice(2));
+            const msg = JSON.parse(payload[1]);
+            if (msg.action === 'room/join' || msg.action === 'client/connected') {
+              clearTimeout(timeout);
+              showConnected(name, code);
+              startHeartbeat(ws, 'blobcast');
+              resolve();
+            }
+            if (msg.action === 'error') {
+              clearTimeout(timeout);
+              reject(new Error(msg.args?.message || 'Ошибка комнаты'));
+            }
+          } catch(_) {}
+        }
+        // heartbeat
+        if (data === '2') ws.send('3');
+      };
+
+      ws.onerror = () => { clearTimeout(timeout); reject(new Error('Ошибка WebSocket')); };
+      ws.onclose = (e) => {
+        clearTimeout(timeout);
+        if (document.getElementById('connected-card').classList.contains('active')) {
+          disconnect();
+          setStatus('Соединение разорвано', 'error');
+        }
+      };
+    });
+  }
+
+  function startHeartbeat(socket, type) {
+    if (heartbeat) clearInterval(heartbeat);
+    heartbeat = setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN) {
+        if (type === 'ecast')    socket.send(JSON.stringify({ opcode: 'client/ping' }));
+        if (type === 'blobcast') socket.send('2');
+      }
+    }, 20000);
+  }
+</script>
+</body>
+</html>
