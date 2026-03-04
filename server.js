@@ -17,9 +17,18 @@ const http = require('http');
 const https = require('https');
 const { WebSocketServer, WebSocket } = require('ws');
 const url = require('url');
+const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.ACCESSIBLE_HOST || 'localhost';
+
+
+
+const server = http.createServer((req, res) => {
+  const filePath = path.join(__dirname, 'client/index.htm');
+
+
+
 
 // ─── Официальные серверы Jackbox ───────────────────────────────────────────────
 const ECAST_HOST    = 'ecast.jackboxgames.com';
