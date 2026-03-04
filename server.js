@@ -24,11 +24,6 @@ const HOST = process.env.ACCESSIBLE_HOST || 'localhost';
 
 
 
-const server = http.createServer((req, res) => {
-  const filePath = path.join(__dirname, 'client/index.htm');
-
-
-
 
 // ─── Официальные серверы Jackbox ───────────────────────────────────────────────
 const ECAST_HOST    = 'ecast.jackboxgames.com';
