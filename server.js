@@ -100,12 +100,26 @@ const server = http.createServer((req, res) => {
   }
 
   // Статические файлы из client/ (CSS, JS, картинки и т.д.)
-  // Запросы вида /style.css, /script.js, /assets/... → ищем в client/
-  const staticFilePath = path.join(CLIENT_DIR, reqPath);
+  // Только если путь НЕ похож на API/бандл Jackbox — пробуем найти в client/
+  const isJackboxPath =
+    reqPath.startsWith('/api/') ||
+    reqPath.startsWith('/ecast') ||
+    reqPath.startsWith('/blobcast') ||
+    reqPath.startsWith('/socket.io') ||
+    reqPath.startsWith('/main/') ||      // бандлы игр jackbox
+    reqPath.startsWith('/room/') ||
+    reqPath.startsWith('/audience/');
+
+  if (isJackboxPath) {
+    proxyHttpRequest(req, res, ECAST_HOST);
+    return;
+  }
+
+  // Для остального — сначала ищем в client/, иначе проксируем
+  const staticFilePath = path.resolve(CLIENT_DIR, '.' + reqPath);
   // Защита от path traversal
-  if (!staticFilePath.startsWith(CLIENT_DIR)) {
-    res.writeHead(403);
-    res.end('Forbidden');
+  if (!staticFilePath.startsWith(CLIENT_DIR + path.sep) && staticFilePath !== CLIENT_DIR) {
+    proxyHttpRequest(req, res, ECAST_HOST);
     return;
   }
 
