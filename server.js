@@ -1,40 +1,26 @@
 /**
  * Jackbox Proxy Server
- * Точная копия jb-ecast.klucva.ru — прокси к официальным серверам Jackbox.
- *
- * Как работает:
- *  - HTTP API запросы → проксирует на ecast.jackboxgames.com
- *  - Ecast WebSocket  → проксирует на wss://ecast.jackboxgames.com
- *  - Blobcast Socket.IO → проксирует на wss://blobcast.jackboxgames.com
- *
- * Деплой: Render.com / Railway / любой Node хостинг
- * Переменные окружения:
- *   PORT            — порт (Render проставляет сам)
- *   ACCESSIBLE_HOST — твой домен (твой-сервис.onrender.com)
  */
 
 const http = require('http');
 const https = require('https');
 const { WebSocketServer, WebSocket } = require('ws');
 const url = require('url');
-const fs = require('fs');
 const path = require('path');
+const fs = require('fs');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.ACCESSIBLE_HOST || 'localhost';
 
-
-
-
-// ─── Официальные серверы Jackbox ───────────────────────────────────────────────
 const ECAST_HOST    = 'ecast.jackboxgames.com';
 const BLOBCAST_HOST = 'blobcast.jackboxgames.com';
 const ECAST_WS      = `wss://${ECAST_HOST}`;
 const BLOBCAST_WS   = `wss://${BLOBCAST_HOST}`;
 
-// ─── Статические файлы из client/ ─────────────────────────────────────────────
+// Папка со статикой
 const CLIENT_DIR = path.join(__dirname, 'client');
 
+// MIME типы
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.htm':  'text/html; charset=utf-8',
@@ -52,27 +38,27 @@ const MIME_TYPES = {
   '.ttf':  'font/ttf',
 };
 
-function serveStaticFile(filePath, res) {
-  const ext = path.extname(filePath).toLowerCase();
-  const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-
+function serveStatic(filePath, res) {
   fs.readFile(filePath, (err, data) => {
     if (err) {
       res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('404 Not Found');
+      res.end('Not Found');
       return;
     }
-    res.writeHead(200, { 'Content-Type': contentType });
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+    res.writeHead(200, {
+      'Content-Type': contentType,
+      'Access-Control-Allow-Origin': '*',
+    });
     res.end(data);
   });
 }
 
-// ─── HTTP сервер ───────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
-  const reqPath = parsed.pathname;
+  const pathname = parsed.pathname;
 
-  // CORS для jackbox.fun и jackbox.tv
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
@@ -84,57 +70,34 @@ const server = http.createServer((req, res) => {
   }
 
   // Корень — отдаём client/index.htm
-  if (reqPath === '/' || reqPath === '') {
-    const indexFile = path.join(CLIENT_DIR, 'index.htm');
-    fs.access(indexFile, fs.constants.F_OK, (err) => {
-      if (err) {
-        // Файл не найден — заглушка
+  if (pathname === '/' || pathname === '') {
+    const indexPath = path.join(CLIENT_DIR, 'index.htm');
+    if (fs.existsSync(indexPath)) {
+      serveStatic(indexPath, res);
+    } else {
+      const fallback = path.join(CLIENT_DIR, 'index.html');
+      if (fs.existsSync(fallback)) {
+        serveStatic(fallback, res);
+      } else {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.writeHead(200);
         res.end(`Замена серверам джекбокса для России`);
-      } else {
-        serveStaticFile(indexFile, res);
       }
-    });
-    return;
-  }
-
-  // Статические файлы из client/ (CSS, JS, картинки и т.д.)
-  // Только если путь НЕ похож на API/бандл Jackbox — пробуем найти в client/
-  const isJackboxPath =
-    reqPath.startsWith('/api/') ||
-    reqPath.startsWith('/ecast') ||
-    reqPath.startsWith('/blobcast') ||
-    reqPath.startsWith('/socket.io') ||
-    reqPath.startsWith('/main/') ||      // бандлы игр jackbox
-    reqPath.startsWith('/room/') ||
-    reqPath.startsWith('/audience/');
-
-  if (isJackboxPath) {
-    proxyHttpRequest(req, res, ECAST_HOST);
-    return;
-  }
-
-  // Для остального — сначала ищем в client/, иначе проксируем
-  const staticFilePath = path.resolve(CLIENT_DIR, '.' + reqPath);
-  // Защита от path traversal
-  if (!staticFilePath.startsWith(CLIENT_DIR + path.sep) && staticFilePath !== CLIENT_DIR) {
-    proxyHttpRequest(req, res, ECAST_HOST);
-    return;
-  }
-
-  fs.access(staticFilePath, fs.constants.F_OK, (err) => {
-    if (!err) {
-      // Файл существует в client/ — отдаём его
-      serveStaticFile(staticFilePath, res);
-    } else {
-      // Не нашли в client/ — проксируем на официальный ecast
-      proxyHttpRequest(req, res, ECAST_HOST);
     }
-  });
+    return;
+  }
+
+  // Статические файлы из папки client/
+  const staticPath = path.join(CLIENT_DIR, pathname);
+  if (staticPath.startsWith(CLIENT_DIR) && fs.existsSync(staticPath) && fs.statSync(staticPath).isFile()) {
+    serveStatic(staticPath, res);
+    return;
+  }
+
+  // Всё остальное — проксируем на официальный ecast
+  proxyHttpRequest(req, res, ECAST_HOST);
 });
 
-// ─── HTTP прокси ───────────────────────────────────────────────────────────────
 function proxyHttpRequest(req, res, targetHost) {
   let body = [];
 
@@ -154,14 +117,12 @@ function proxyHttpRequest(req, res, targetHost) {
       },
     };
 
-    // Убираем заголовки которые ломают прокси
     delete options.headers['content-length'];
     if (bodyData.length > 0) {
       options.headers['content-length'] = bodyData.length;
     }
 
     const proxy = https.request(options, (proxyRes) => {
-      // Добавляем CORS к ответу от jackbox
       const headers = { ...proxyRes.headers };
       headers['access-control-allow-origin'] = '*';
       headers['access-control-allow-headers'] = 'Content-Type, Authorization';
@@ -183,7 +144,6 @@ function proxyHttpRequest(req, res, targetHost) {
   });
 }
 
-// ─── WebSocket прокси (универсальный) ─────────────────────────────────────────
 function createWsProxy(targetUrlBase) {
   return function handleClientWs(clientWs, request) {
     const clientPath = request.url || '/';
@@ -199,10 +159,8 @@ function createWsProxy(targetUrlBase) {
       rejectUnauthorized: false,
     });
 
-    // Буфер сообщений пока target не открылся
     const queue = [];
 
-    // Клиент → Jackbox
     clientWs.on('message', (data, isBinary) => {
       if (targetWs.readyState === WebSocket.OPEN) {
         targetWs.send(data, { binary: isBinary });
@@ -211,9 +169,7 @@ function createWsProxy(targetUrlBase) {
       }
     });
 
-    // Jackbox → Клиент
     targetWs.on('open', () => {
-      // Слить буфер
       while (queue.length > 0) {
         const { data, isBinary } = queue.shift();
         targetWs.send(data, { binary: isBinary });
@@ -226,7 +182,6 @@ function createWsProxy(targetUrlBase) {
       }
     });
 
-    // Закрытия
     clientWs.on('close', (code, reason) => {
       if (targetWs.readyState === WebSocket.OPEN || targetWs.readyState === WebSocket.CONNECTING) {
         targetWs.close(code, reason);
@@ -239,7 +194,6 @@ function createWsProxy(targetUrlBase) {
       }
     });
 
-    // Ошибки
     clientWs.on('error', (err) => {
       console.error(`[WS CLIENT] Error: ${err.message}`);
       targetWs.terminate();
@@ -254,42 +208,36 @@ function createWsProxy(targetUrlBase) {
   };
 }
 
-// ─── WebSocket серверы ─────────────────────────────────────────────────────────
-// Ecast WS: /api/v2/rooms/... и /ecast/...
 const ecastWss    = new WebSocketServer({ noServer: true });
-// Blobcast Socket.IO polling/ws: /socket.io/... и /blobcast/...
 const blobcastWss = new WebSocketServer({ noServer: true });
 
 ecastWss.on('connection',    createWsProxy(ECAST_WS));
 blobcastWss.on('connection', createWsProxy(BLOBCAST_WS));
 
-// ─── HTTP Upgrade → правильный WSS ────────────────────────────────────────────
 server.on('upgrade', (request, socket, head) => {
   const pathname = url.parse(request.url).pathname || '/';
 
-  // Blobcast: Socket.IO пути и старые /socket.io/
   const isBlobcast =
     pathname.startsWith('/socket.io') ||
     pathname.startsWith('/blobcast')  ||
-    pathname.includes('EIO=');         // socket.io query fallback
+    pathname.includes('EIO=');
 
   if (isBlobcast) {
     blobcastWss.handleUpgrade(request, socket, head, (ws) => {
       blobcastWss.emit('connection', ws, request);
     });
   } else {
-    // Всё остальное (Ecast, /api/v2/, /ecast) → ecast
     ecastWss.handleUpgrade(request, socket, head, (ws) => {
       ecastWss.emit('connection', ws, request);
     });
   }
 });
 
-// ─── Запуск ────────────────────────────────────────────────────────────────────
 server.listen(PORT, () => {
   console.log(`
 ✅ Jackbox Proxy Server запущен на порту ${PORT}
    Твой домен:    ${HOST}
+   Главная:       https://${HOST} → ./client/index.htm
    Ecast прокси:  wss://${HOST}  →  ${ECAST_WS}
    Blobcast:      wss://${HOST}  →  ${BLOBCAST_WS}
    HTTP API:      https://${HOST} →  https://${ECAST_HOST}
