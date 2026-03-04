@@ -1,12 +1,16 @@
 {
-  "name": "jackbox-proxy",
+  "name": "jackbox-all-versions-server",
   "version": "1.0.0",
+  "description": "Self-hosted Jackbox server supporting Ecast (Pack 7+) and Blobcast (Pack 1-6)",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
-    "express": "^4.18.2",
-    "http-proxy-middleware": "^2.0.6"
+    "socket.io": "^4.7.2",
+    "ws": "^8.16.0"
   }
 }
