@@ -1,7 +1,3 @@
-/**
- * Jackbox Proxy Server
- */
-
 const http = require('http');
 const https = require('https');
 const { WebSocketServer, WebSocket } = require('ws');
@@ -16,11 +12,11 @@ const ECAST_HOST    = 'ecast.jackboxgames.com';
 const BLOBCAST_HOST = 'blobcast.jackboxgames.com';
 const ECAST_WS      = `wss://${ECAST_HOST}`;
 const BLOBCAST_WS   = `wss://${BLOBCAST_HOST}`;
+const JACKBOX_CDN   = 'jackbox.fun';
 
 // Папка со статикой
 const CLIENT_DIR = path.join(__dirname, 'client');
 
-// MIME типы
 const MIME_TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.htm':  'text/html; charset=utf-8',
@@ -55,6 +51,45 @@ function serveStatic(filePath, res) {
   });
 }
 
+// ─── /main/* прокси на jackbox.fun (как в рабочем app.js) ─────────────────────
+function proxyMainRequest(req, res) {
+  const fullPath = req.url; // уже содержит /main/...
+  console.log(`[CDN proxy] -> https://${JACKBOX_CDN}${fullPath}`);
+
+  const options = {
+    hostname: JACKBOX_CDN,
+    port: 443,
+    path: fullPath,
+    method: 'GET',
+    headers: {
+      'User-Agent': 'Mozilla/5.0',
+      'Accept': '*/*',
+      'Accept-Encoding': 'identity',
+      'Host': JACKBOX_CDN,
+    },
+  };
+
+  const proxyReq = https.request(options, (proxyRes) => {
+    console.log(`[CDN proxy] <- ${proxyRes.statusCode} ${fullPath}`);
+    const headers = {};
+    const keep = ['content-type', 'content-length', 'cache-control', 'last-modified', 'etag'];
+    keep.forEach(h => { if (proxyRes.headers[h]) headers[h] = proxyRes.headers[h]; });
+    headers['access-control-allow-origin'] = '*';
+    res.writeHead(proxyRes.statusCode, headers);
+    proxyRes.pipe(res, { end: true });
+  });
+
+  proxyReq.on('error', (err) => {
+    console.error(`[CDN proxy] ERROR: ${err.message}`);
+    if (!res.headersSent) {
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'proxy error', message: err.message }));
+    }
+  });
+
+  proxyReq.end();
+}
+
 const server = http.createServer((req, res) => {
   const parsed = url.parse(req.url, true);
   const pathname = parsed.pathname;
@@ -69,7 +104,13 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Корень — отдаём client/index.htm
+  // /main/* → jackbox.fun CDN
+  if (pathname.startsWith('/main/') || pathname === '/main') {
+    proxyMainRequest(req, res);
+    return;
+  }
+
+  // Корень → client/index.htm
   if (pathname === '/' || pathname === '') {
     const indexPath = path.join(CLIENT_DIR, 'index.htm');
     if (fs.existsSync(indexPath)) {
@@ -87,24 +128,22 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  // Статические файлы из папки client/
+  // Статика из client/
   const staticPath = path.join(CLIENT_DIR, pathname);
   if (staticPath.startsWith(CLIENT_DIR) && fs.existsSync(staticPath) && fs.statSync(staticPath).isFile()) {
     serveStatic(staticPath, res);
     return;
   }
 
-  // Всё остальное — проксируем на официальный ecast
+  // Всё остальное → ecast прокси
   proxyHttpRequest(req, res, ECAST_HOST);
 });
 
 function proxyHttpRequest(req, res, targetHost) {
   let body = [];
-
   req.on('data', chunk => body.push(chunk));
   req.on('end', () => {
     const bodyData = Buffer.concat(body);
-
     const options = {
       hostname: targetHost,
       port: 443,
@@ -116,17 +155,13 @@ function proxyHttpRequest(req, res, targetHost) {
         'x-forwarded-for': req.socket.remoteAddress,
       },
     };
-
     delete options.headers['content-length'];
-    if (bodyData.length > 0) {
-      options.headers['content-length'] = bodyData.length;
-    }
+    if (bodyData.length > 0) options.headers['content-length'] = bodyData.length;
 
     const proxy = https.request(options, (proxyRes) => {
       const headers = { ...proxyRes.headers };
       headers['access-control-allow-origin'] = '*';
       headers['access-control-allow-headers'] = 'Content-Type, Authorization';
-
       res.writeHead(proxyRes.statusCode, headers);
       proxyRes.pipe(res);
     });
@@ -148,7 +183,6 @@ function createWsProxy(targetUrlBase) {
   return function handleClientWs(clientWs, request) {
     const clientPath = request.url || '/';
     const targetUrl  = targetUrlBase + clientPath;
-
     console.log(`[WS PROXY] ${request.socket.remoteAddress} → ${targetUrl}`);
 
     const targetWs = new WebSocket(targetUrl, {
@@ -189,9 +223,7 @@ function createWsProxy(targetUrlBase) {
     });
 
     targetWs.on('close', (code, reason) => {
-      if (clientWs.readyState === WebSocket.OPEN) {
-        clientWs.close(code, reason);
-      }
+      if (clientWs.readyState === WebSocket.OPEN) clientWs.close(code, reason);
     });
 
     clientWs.on('error', (err) => {
@@ -201,9 +233,7 @@ function createWsProxy(targetUrlBase) {
 
     targetWs.on('error', (err) => {
       console.error(`[WS TARGET → ${targetUrlBase}] Error: ${err.message}`);
-      if (clientWs.readyState === WebSocket.OPEN) {
-        clientWs.close(1011, 'upstream error');
-      }
+      if (clientWs.readyState === WebSocket.OPEN) clientWs.close(1011, 'upstream error');
     });
   };
 }
@@ -216,7 +246,6 @@ blobcastWss.on('connection', createWsProxy(BLOBCAST_WS));
 
 server.on('upgrade', (request, socket, head) => {
   const pathname = url.parse(request.url).pathname || '/';
-
   const isBlobcast =
     pathname.startsWith('/socket.io') ||
     pathname.startsWith('/blobcast')  ||
@@ -236,13 +265,10 @@ server.on('upgrade', (request, socket, head) => {
 server.listen(PORT, () => {
   console.log(`
 ✅ Jackbox Proxy Server запущен на порту ${PORT}
-   Твой домен:    ${HOST}
    Главная:       https://${HOST} → ./client/index.htm
+   CDN /main/*:   https://${HOST}/main/ → https://${JACKBOX_CDN}/main/
    Ecast прокси:  wss://${HOST}  →  ${ECAST_WS}
    Blobcast:      wss://${HOST}  →  ${BLOBCAST_WS}
    HTTP API:      https://${HOST} →  https://${ECAST_HOST}
-
-   Используй в игре:
-   -jbg.config serverUrl=${HOST}
 `);
 });
